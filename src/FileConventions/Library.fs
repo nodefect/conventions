@@ -597,6 +597,7 @@ let IsExecutable(fileInfo: FileInfo) =
     hasExecuteAccess = 0
 
 let anyRegex = Regex(@"\bany\b", RegexOptions.Compiled)
+let deleteRegex = Regex(@"\bdelete\b", RegexOptions.Compiled)
 let stringCharMarkers = [ '"'; '\''; '`' ] |> Seq.map string
 let singleLineCommentMarker = "//"
 let multiLineCommentMarker = "/*"
@@ -619,11 +620,9 @@ let ContainsUnacceptableTypeScript(fileInfo: FileInfo) =
                 (targetSubstrings: seq<string>)
                 =
                 text
-
                 |> Seq.indexed
                 |> Seq.tryPick(fun (currentIndex, _) ->
                     targetSubstrings
-
                     |> Seq.tryFind(fun target ->
                         // Check if the text contains the target starting at this specific index
                         text.IndexOf(target, currentIndex) = currentIndex
@@ -705,8 +704,12 @@ let ContainsUnacceptableTypeScript(fileInfo: FileInfo) =
                         substractAllSubstringsFromString afterPart
 
                     contentSoFar.AppendLine cleanString |> ignore<StringBuilder>
-
                     findContentToAnalyze tail contentSoFar maybeEndMarker
+
+    let getTypeScriptContentToAnalyze(fileLines: seq<string>) : string =
+        let wholeFileContentButTheStrings = StringBuilder()
+        findContentToAnalyze fileLines wholeFileContentButTheStrings None
+        wholeFileContentButTheStrings.ToString()
 
     let fileLines = File.ReadLines fileInfo.FullName |> Seq.toList
 
@@ -718,13 +721,11 @@ let ContainsUnacceptableTypeScript(fileInfo: FileInfo) =
                 .StartsWith "/* eslint @typescript-eslint/no-explicit-any: \"off\" */"
         | [] -> false
 
+    let contentToAnalyze = getTypeScriptContentToAnalyze fileLines
+    let hasAny = anyRegex.IsMatch(contentToAnalyze)
+    let hasDelete = deleteRegex.IsMatch(contentToAnalyze)
+
     if hasEslintDisableComment then
-        false
+        hasDelete
     else
-
-        let wholeFileContentButTheStrings = StringBuilder()
-
-        findContentToAnalyze fileLines wholeFileContentButTheStrings None
-
-        let contentToAnalyze: string = wholeFileContentButTheStrings.ToString()
-        anyRegex.IsMatch(contentToAnalyze)
+        hasAny || hasDelete
