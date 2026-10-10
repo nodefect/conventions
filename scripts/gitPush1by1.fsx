@@ -186,9 +186,8 @@ let FindUnpushedCommits (remoteName: string) (remoteBranch: string) =
         )
 
     match showRefResult.Result with
-    | Success _ -> ()
+    | Success _
     | WarningsOrAmbiguous _ -> ()
-    | Error(0, _) -> ()
     | Error _ ->
         let lsRemoteResult =
             Process.ExecDefault(
