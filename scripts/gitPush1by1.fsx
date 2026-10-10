@@ -176,25 +176,58 @@ let rec private FindUnpushedCommitsInternal
 let FindUnpushedCommits (remoteName: string) (remoteBranch: string) =
     GitFetch(Some remoteName)
 
-    try
-        Process
-            .ExecDefault(
-                sprintf
-                    "git show-ref --verify --quiet refs/remotes/%s/%s"
-                    remoteName
-                    remoteBranch,
-                echo = Echo.Off
-            )
-            .UnwrapDefault(throwWhenWarnings = false)
-        |> ignore<string>
-    with
-    | _ ->
-        let exitCode, errMsg =
-            ErrRemoteBranchDoesntExist remoteBranch remoteName
+    let remoteRefExists =
+        try
+            Process
+                .ExecDefault(
+                    sprintf
+                        "git show-ref --verify --quiet refs/remotes/%s/%s"
+                        remoteName
+                        remoteBranch,
+                    echo = Echo.Off
+                )
+                .UnwrapDefault(throwWhenWarnings = false)
+            |> ignore<string>
+            true
+        with
+        | _ -> false
 
-        Console.Error.WriteLine errMsg
-        Environment.Exit exitCode
-        failwith <| "Unreachable because of: " + errMsg
+    if not remoteRefExists then
+        let lsRemoteOutput =
+            try
+                Process
+                    .ExecDefault(
+                        sprintf
+                            "git ls-remote --exit-code --heads %s %s"
+                            remoteName
+                            remoteBranch,
+                        echo = Echo.Off
+                    )
+                    .UnwrapDefault(throwWhenWarnings = false)
+            with
+            | _ -> ""
+        
+        if lsRemoteOutput.Contains(sprintf "refs/heads/%s" remoteBranch) then
+            // If it exists on remote but not locally in refs/remotes, 
+            // it might be because it's a new branch and we haven't fetched it yet.
+            // We use a refspec to ensure refs/remotes/<remote>/<branch> is updated.
+            try
+                Process
+                    .ExecDefault(
+                        sprintf "git fetch %s refs/heads/%s:refs/remotes/%s/%s" remoteName remoteBranch remoteName remoteBranch,
+                        echo = Echo.OutputOnly
+                    )
+                    .UnwrapDefault(throwWhenWarnings = false)
+                |> ignore<string>
+            with
+            | _ -> ()
+        else
+            let exitCode, errMsg =
+                ErrRemoteBranchDoesntExist remoteBranch remoteName
+
+            Console.Error.WriteLine errMsg
+            Environment.Exit exitCode
+            failwith <| "Unreachable because of: " + errMsg
 
     FindUnpushedCommitsInternal List.empty 0u List.empty remoteName remoteBranch
 
