@@ -65,21 +65,22 @@ let GitSpecificPush
         else
             "--force-with-lease"
 
-    try
-        Process
-            .ExecDefault(
-                sprintf
-                    "git push %s %s:refs/heads/%s %s"
-                    remoteName
-                    commitSha
-                    remoteBranchName
-                    forceFlag,
-                echo = Echo.OutputOnly
-            )
-            .UnwrapDefault(throwWhenWarnings = false)
-        |> ignore<string>
-    with
-    | _ -> failwith "Push failed ^"
+    let pushResult =
+        Process.ExecDefault(
+            sprintf
+                "git push %s %s:refs/heads/%s %s"
+                remoteName
+                commitSha
+                remoteBranchName
+                forceFlag,
+            echo = Echo.OutputOnly
+        )
+
+    if pushResult.ExitCode <> 0 then
+        failwith "Push failed ^"
+
+    pushResult.UnwrapDefault(throwWhenWarnings = false)
+    |> ignore<string>
 
 let GitFetch(remoteOpt: Option<string>) =
     let remoteArg =
@@ -87,16 +88,17 @@ let GitFetch(remoteOpt: Option<string>) =
         | None -> "--all"
         | Some remote -> remote
 
-    try
-        Process
-            .ExecDefault(
-                sprintf "git fetch %s" remoteArg,
-                echo = Echo.OutputOnly
-            )
-            .UnwrapDefault(throwWhenWarnings = false)
-        |> ignore<string>
-    with
-    | _ -> failwith "Fetch failed ^"
+    let fetchResult =
+        Process.ExecDefault(
+            sprintf "git fetch %s" remoteArg,
+            echo = Echo.OutputOnly
+        )
+
+    if fetchResult.ExitCode <> 0 then
+        failwith "Fetch failed ^"
+
+    fetchResult.UnwrapDefault(throwWhenWarnings = false)
+    |> ignore<string>
 
 let GetLastNthCommitFromRemoteBranch
     (remoteName: string)
@@ -176,51 +178,48 @@ let rec private FindUnpushedCommitsInternal
 let FindUnpushedCommits (remoteName: string) (remoteBranch: string) =
     GitFetch(Some remoteName)
 
-    let remoteRefExists =
-        try
-            Process
-                .ExecDefault(
+    let showRefResult =
+        Process.ExecDefault(
+            sprintf
+                "git show-ref --verify --quiet refs/remotes/%s/%s"
+                remoteName
+                remoteBranch,
+            echo = Echo.Off
+        )
+
+    if showRefResult.ExitCode <> 0 then
+        let lsRemoteOutput =
+            let lsRemoteResult =
+                Process.ExecDefault(
                     sprintf
-                        "git show-ref --verify --quiet refs/remotes/%s/%s"
+                        "git ls-remote --exit-code --heads %s %s"
                         remoteName
                         remoteBranch,
                     echo = Echo.Off
                 )
-                .UnwrapDefault(throwWhenWarnings = false)
-            |> ignore<string>
-            true
-        with
-        | _ -> false
 
-    if not remoteRefExists then
-        let lsRemoteOutput =
-            try
-                Process
-                    .ExecDefault(
-                        sprintf
-                            "git ls-remote --exit-code --heads %s %s"
-                            remoteName
-                            remoteBranch,
-                        echo = Echo.Off
-                    )
-                    .UnwrapDefault(throwWhenWarnings = false)
-            with
-            | _ -> ""
-        
+            if lsRemoteResult.ExitCode = 0 then
+                lsRemoteResult.UnwrapDefault(throwWhenWarnings = false)
+            else
+                String.Empty
+
         if lsRemoteOutput.Contains(sprintf "refs/heads/%s" remoteBranch) then
-            // If it exists on remote but not locally in refs/remotes, 
+            // If it exists on remote but not locally in refs/remotes,
             // it might be because it's a new branch and we haven't fetched it yet.
             // We use a refspec to ensure refs/remotes/<remote>/<branch> is updated.
-            try
-                Process
-                    .ExecDefault(
-                        sprintf "git fetch %s refs/heads/%s:refs/remotes/%s/%s" remoteName remoteBranch remoteName remoteBranch,
-                        echo = Echo.OutputOnly
-                    )
-                    .UnwrapDefault(throwWhenWarnings = false)
-                |> ignore<string>
-            with
-            | _ -> ()
+            let fetchResult =
+                Process.ExecDefault(
+                    sprintf
+                        "git fetch %s refs/heads/%s:refs/remotes/%s/%s"
+                        remoteName
+                        remoteBranch
+                        remoteName
+                        remoteBranch,
+                    echo = Echo.OutputOnly
+                )
+
+            fetchResult.UnwrapDefault(throwWhenWarnings = false)
+            |> ignore<string>
         else
             let exitCode, errMsg =
                 ErrRemoteBranchDoesntExist remoteBranch remoteName
