@@ -52,12 +52,6 @@ let ErrRemoteBranchDoesntExist remoteBranch remoteName =
          remoteBranch
          remoteName)
 
-let ProcessFailed processResult =
-    match processResult.Result with
-    | Error(exitCode, _) -> exitCode <> 0
-    | Success _
-    | WarningsOrAmbiguous _ -> false
-
 // mimic https://stackoverflow.com/a/3230241/544947
 let GitSpecificPush
     (remoteName: string)
@@ -71,22 +65,21 @@ let GitSpecificPush
         else
             "--force-with-lease"
 
-    let pushResult =
-        Process.ExecDefault(
-            sprintf
-                "git push %s %s:refs/heads/%s %s"
-                remoteName
-                commitSha
-                remoteBranchName
-                forceFlag,
-            echo = Echo.OutputOnly
-        )
-
-    if ProcessFailed pushResult then
-        failwith "Push failed ^"
-
-    pushResult.UnwrapDefault(throwWhenWarnings = false)
-    |> ignore<string>
+    try
+        Process
+            .ExecDefault(
+                sprintf
+                    "git push %s %s:refs/heads/%s %s"
+                    remoteName
+                    commitSha
+                    remoteBranchName
+                    forceFlag,
+                echo = Echo.OutputOnly
+            )
+            .UnwrapDefault(throwWhenWarnings = false)
+        |> ignore<string>
+    with
+    | _ -> failwith "Push failed ^"
 
 let GitFetch(remoteOpt: Option<string>) =
     let remoteArg =
@@ -94,17 +87,16 @@ let GitFetch(remoteOpt: Option<string>) =
         | None -> "--all"
         | Some remote -> remote
 
-    let fetchResult =
-        Process.ExecDefault(
-            sprintf "git fetch %s" remoteArg,
-            echo = Echo.OutputOnly
-        )
-
-    if ProcessFailed fetchResult then
-        failwith "Fetch failed ^"
-
-    fetchResult.UnwrapDefault(throwWhenWarnings = false)
-    |> ignore<string>
+    try
+        Process
+            .ExecDefault(
+                sprintf "git fetch %s" remoteArg,
+                echo = Echo.OutputOnly
+            )
+            .UnwrapDefault(throwWhenWarnings = false)
+        |> ignore<string>
+    with
+    | _ -> failwith "Fetch failed ^"
 
 let GetLastNthCommitFromRemoteBranch
     (remoteName: string)
@@ -193,21 +185,27 @@ let FindUnpushedCommits (remoteName: string) (remoteBranch: string) =
             echo = Echo.Off
         )
 
-    if ProcessFailed showRefResult then
-        let lsRemoteOutput =
-            let lsRemoteResult =
-                Process.ExecDefault(
-                    sprintf
-                        "git ls-remote --exit-code --heads %s %s"
-                        remoteName
-                        remoteBranch,
-                    echo = Echo.Off
-                )
+    match showRefResult.Result with
+    | Error(0, _)
+    | Success _
+    | WarningsOrAmbiguous _ -> ()
+    | Error _ ->
+        let lsRemoteResult =
+            Process.ExecDefault(
+                sprintf
+                    "git ls-remote --exit-code --heads %s %s"
+                    remoteName
+                    remoteBranch,
+                echo = Echo.Off
+            )
 
-            if ProcessFailed lsRemoteResult then
-                String.Empty
-            else
+        let lsRemoteOutput =
+            match lsRemoteResult.Result with
+            | Error(0, _)
+            | Success _
+            | WarningsOrAmbiguous _ ->
                 lsRemoteResult.UnwrapDefault(throwWhenWarnings = false)
+            | Error _ -> String.Empty
 
         if lsRemoteOutput.Contains(sprintf "refs/heads/%s" remoteBranch) then
             // If it exists on remote but not locally in refs/remotes,
